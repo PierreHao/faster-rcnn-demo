@@ -1,0 +1,408 @@
+
+<!doctype html>
+<html>
+<head>
+<title>Flaskr</title>
+<script type="text/javascript" src="./html/js/jquery-2.1.4.js" ></script>
+<script type="text/javascript">
+(function($){
+$(document).ready(function(){
+var THUMB_WIDTH = 100;
+var SOURCE_HEIGHT = 256;
+var SMALL_SOURCE_HEIGHT = 25;
+var BASE_X = 1;
+var BASE_Y = 1;
+var BASE_W = 1;
+var BASE_H = 1;
+$(".wrapper").on("dragover", function(e){
+    console.dir(e);
+    e.stopPropagation();
+    e.preventDefault();
+    e.originalEvent.dataTransfer.dropEffect = 'copy';
+
+});
+
+$("#upload_file").on("change", function(e) {
+    var files = e.target.files;
+    readImage(files); 
+});
+$(".wrapper").on("drop", function(e){
+    e.stopPropagation();
+    e.preventDefault();
+
+    var files = e.originalEvent.dataTransfer.files;
+    readImage(files);
+
+    $( '#upload_file').each( function(i, file){
+	    file.files = files;
+    });
+
+});
+
+
+function readImage(files) {
+    var reader = new FileReader();
+    console.dir(files);
+    reader.readAsDataURL(files[0]);
+    reader.onload = function() {
+        createImageTag(reader);
+    };
+}
+
+function createImageTag(reader) {
+    var result_data_url = reader.result;
+    var imgtag = "<img src='" + result_data_url + "' />";
+    $("#upload_area").html(imgtag);
+
+    $('#upload_area img').on("load", function() {
+        var ucan = document.getElementById("ss_canvas");
+	ucan.width = this.naturalWidth;
+	ucan.height = this.naturalHeight;
+	ucan.style.width = this.naturalWidth;
+	ucan.style.height = this.naturalHeight;
+        BASE_X = ucan.width/5;
+        BASE_Y = ucan.height/5;
+        BASE_W = BASE_X;
+        BASE_H = BASE_Y;
+        var ctx = ucan.getContext('2d');
+	ctx.drawImage(this, 0, 0);
+    });
+
+}
+
+$("#predict_submit").on("click", function(){
+    predictImage(this);
+});
+
+function predictImage(that) {
+    var files = that.files;
+    var imagefile = new FormData();
+    $( 'input[type="file"]').each( function(i, file){
+        imagefile.append(file["name"], file.files[0]);
+    });
+    $.ajax(
+    {
+      url : "/predict",
+      type : "POST",
+      data : imagefile,
+      processData : false,
+      contentType : false
+    }
+    ).done(function(data){
+       //data = JSON.parse(data);
+       drawRegions(data); 
+    });
+}
+function hash2Array(iHash){
+    var results = [];
+    for (var i in iHash) {
+        for ( j in iHash[i]){
+            results[results.length] = iHash[i][j];
+        }
+    }
+    return results;
+}
+
+function distillePredictions(iArray) {
+    var predictions = iArray;
+    var results = [];
+    var distilled = {};
+    var key = "";
+    for (var i in predictions) {
+        rect = predictions[i];
+        key = Math.floor(rect["width"]/BASE_W) + ":" + Math.floor(rect["height"]/BASE_H) + ":" + Math.floor(rect["x"]/BASE_X) + ":" + Math.floor(rect["y"]/BASE_Y); 
+        key += ":" + predictions[i]["class_name"];
+
+        if ( key in distilled ) {
+            if ( distilled[key]["score"] < predictions[i]["score"] ) {
+                distilled[key] = predictions[i];
+            }
+        } else {
+            distilled[key] = predictions[i];
+        }
+    } 
+    console.dir(distilled);
+
+    for ( k in distilled ) {
+        results[results.length] = distilled[k];
+    }
+    console.dir(results);
+    return results;
+}
+function drawRegions(predictionHash) {
+    var predictions = hash2Array(predictionHash);
+    predictions = distillePredictions(predictions);
+    var ucan = document.getElementById('ss_canvas');
+    var ctx = ucan.getContext('2d');
+    ctx.strokeStyle = '#f0f0f0';
+    ctx.lineWidth = 2;
+    ctx.font = "30px ";
+    var results = [];
+    var rect, score, top_score;
+    var imageUrls = new Array(predictions.length);
+    for (var i in predictions) {
+        rect = predictions[i];
+        score = predictions[i]["score"];
+	top_score = score;
+        console.log(top_score);
+	//if (((predictions[i]["class_name"] == "person") && (top_score-0 > 0.90)) || ((predictions[i]["class_name"] == "cat") && (top_score-0 > 0.91))) {
+	if (top_score > 0.50) {
+	    ctx.strokeRect(rect["x"], rect["y"], rect["width"], rect["height"]);
+	    //ctx.strokeText(predictions[i]["class_name"] + " : " + Math.floor(top_score*10000)/10000, rect["x"]+rect["width"]/2, rect["y"]+rect["height"]/2+10);
+	    ctx.strokeText(predictions[i]["class_name"] + " : " + Math.floor(top_score*10000)/10000, rect["x"], rect["y"]+12);
+	}
+        console.dir(predictions[i]);
+    } 
+}
+
+function viewPredictionImages(imageUrls, predictions){
+    $("#result").empty();
+    var resultHtml = "";
+    for (var i=0; i < imageUrls.length; i++) {
+        if ( imageUrls[i] ) {
+            console.dir(imageUrls[i]);
+            resultHtml += "<div class='category'>";
+            resultHtml += "<div class='score_area'>";
+	    resultHtml += "<h2 class='score' style='width:" + predictions[i]["score"] + "%;' > ";
+	    resultHtml += "<div>" + Math.floor(predictions[i]["score"]*10000)/10000 + " : " + predictions[i]["name"] + "</div>";
+	    resultHtml += "</h2>";
+            resultHtml += "</div>";
+            resultHtml += "<div class='image_category'>"
+            for (var num in imageUrls[i]) {
+                resultHtml += "<img src='" + imageUrls[i][num] + "' ";
+                resultHtml += "title='" + predictions[i]["name"] + "' ";
+                resultHtml += " />";
+            }
+            resultHtml += "</div>";
+            resultHtml += "<div class='detail_image'>";
+            resultHtml += "</div>";
+            resultHtml += "</div>";
+        }
+    }
+    $("#result").html(resultHtml);
+    $("#result img").on("load", resizeImage);
+    $("#result img").on("click", changeSize);
+    $("#result").find(".detail_image").hide();
+    $("#result div.image_category").hide();
+    $("#result div.score_area").on("click", toggleSampleImage);
+}
+
+function toggleSampleImage(){
+    console.dir(this);
+    $(this)
+    .parent()
+    .children(".image_category")
+    .animate({height : 'toggle' }, 'slow');
+}
+
+function resizeImage(){
+    var width = this.naturalWidth;
+    var height = this.naturalHeight;
+    //var rate = Math.sqrt(width*width + height*height);
+    var rate = height;
+    
+    this.width = Math.floor(THUMB_WIDTH*width/rate);
+    this.height = Math.floor(THUMB_WIDTH*height/rate);
+    this.title += " : " + this.width + " x " + this.height;
+    this.resizeWidth = this.width;
+    this.resizeHeight = this.height;
+    this.originalWidth = width;
+    this.originalHeight = height;
+    this.clickCounter = 0;
+}
+
+function changeSize(){
+    this.clickCounter += 1;
+    if ( this.clickCounter % 2 == 1 ) {
+        displayDetail(this);
+        //returnToOriginal(this);
+    } else {
+        //minimizeSize(this);
+        hideDetail(this);
+    }
+}
+
+function displayDetail(that) {
+    var clone = that.cloneNode();
+    clone.height = that.originalHeight;
+    clone.width = that.originalWidth;
+    if (clone.height > 400) {
+        clone.height = 400;
+        clone.width = Math.floor(400*that.width/that.height);
+    }
+    $(that).parent()
+    .find("div")
+    .empty()
+    .animate({height : 'show' }, 'slow')
+    .append(clone);;
+}
+
+function hideDetail(that) {
+    $(that).parent()
+    .find("div")
+    .animate({height : 'hide' }, 'slow')
+    .empty();
+}
+
+function returnToOriginal(that){
+    $(that).animate({ 
+        position : "absolute", 
+        zIndex : 10, 
+        width : that.originalWidth, 
+        height : that.originalHeight
+    });
+}
+
+function minimizeSize(that){
+    $(that).animate({ 
+        position : "relative", 
+        zIndex : 0, 
+        width : that.originalWidth, 
+        width : that.resizeWidth, 
+        height : that.resizeHeight
+    });
+}
+})})(jQuery)
+</script>
+<style type="text/css">
+    body {
+        margin : 0;
+        font-family:'繝偵Λ繧ｮ繝手ｧ偵ざ Pro W3', 'Hiragino Kaku Gothic Pro', 繝｡繧､繝ｪ繧ｪ, Meiryo, '�ｭ�ｳ �ｰ繧ｴ繧ｷ繝�け', sans-serif;
+    }
+    .wrapper {
+        margin : 0px 0px 0px 0px;
+    }
+    .searcher {
+        margin : 10px 10px 10px 10px;
+    }
+    .result {
+        background : #f0f0f0;
+        border : solid #000000 0px;
+        border-top : solid #c0c0c0 1px;
+        margin : 0px 0px 0px 0px;
+        padding : 10px 0px 30px 0px;
+        -webkit-box-shadow : 0px 1px 2px rgba(0,0,0,0.1) inset;
+        -moz-box-shadow : 0px 1px 2px rgba(0,0,0,0.1) inset;
+        box-shadow : 0px 1px 2px  rgba(0,0,0,0.1) inset;
+    }
+    .gblue {
+        color : #4d90fe;
+    }
+    .gred {
+        color : #ea4335;
+    }
+    .gyellow {
+        color : #fbbc05;
+    }
+    .ggreen {
+        color : #34ab53;
+    }
+    .image_search_title {
+        color : #303030;
+        font-size : 1.2em;
+	margin-top : -0.3em;
+    }
+    .upload_area {
+	margin : 4px 0px 0px 0px;
+	overflow : visible;
+    }
+    .upload_file {
+        border : solid 1px #4d90fe;
+        width : 525px;
+        height : 26px;
+        margin : 2px 0px 3px 0px;
+    }
+
+    .predict_submit {
+        font-size : 0;
+        padding : 6px 6px 3px 6px;
+        width : 70px;
+        height : 27px;
+        border : solid 1px #4d90fe;
+        background : url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA8AAAAPCAYAAAA71pVKAAAAtUlEQVQoz2P4//8/AxQbAvFBIP7yHwJA9BGoOAM2DGNkAPHv/9jBb6g8Vs0gk39BFd4G4hggloPSt6Hiv7C5AETshyq4i8N5d6Hy+7Fp/gqVDMChOQAq/xWb5r9QSUkcmiWh8n/x2eyDQ7MPPpsPEunng9g0myJFEyh0I4BYBErfRoqyXHLiGRmsxqYZ5gJQivoGVfgNyi/BZQADrqSHhtdhM4BYzVgNIEUzugHrSNUMMwCEGQDxZPLNLQuzXAAAAABJRU5ErkJggg==") no-repeat center center;
+        background-color  : #4d90fe;
+        cursor : pointer;
+    }
+    .predict_submit:active {
+        -webkit-box-shadow : 0px 3px 3px rgba(0,0,0,0.3) inset;
+        -moz-box-shadow : 0px 3px 3px rgba(0,0,0,0.3) inset;
+        box-shadow : 0px 3px 3px  rgba(0,0,0,0.3) inset;
+    }
+    .predict_submit:hover {
+        border : solid 1px #2f5bb7;
+    }
+    .image_category img{ 
+        margin : 5px;
+    }
+
+    .category{ 
+        width : 100%;
+	cursor : pointer;
+    }
+
+    .detail_image{ 
+        background : #222222;
+        width : 100%;
+        height : 450px;
+    }
+
+    .detail_image img{ 
+        margin : 25px  auto auto 100px;
+    }
+    .score_area {
+    }
+    .score { 
+        border : solid 1px #4d90fe;
+        font-size : 1.0em;
+        color : #c0c0c0;
+        height : 1.6em;
+        background : #4d90fe;
+        margin : 0.5em;
+        padding : 0.5em 0em;
+	overflow : visible;
+        -webkit-box-shadow : 0px 1px 1px #909090;
+        -moz-box-shadow : 0px 1px 1px #909090;
+        box-shadow : 0px 1px 1px  #909090;
+    }
+    .score:active {
+        -webkit-box-shadow : 0px 3px 3px rgba(0,0,0,0.3) inset;
+        -moz-box-shadow : 0px 3px 3px rgba(0,0,0,0.3) inset;
+        box-shadow : 0px 3px 3px  rgba(0,0,0,0.3) inset;
+    }
+    .score:hover {
+        border : solid 1px #2f4bb7;
+    }
+    .score div{
+        width : 1000px;
+    }
+    form.predict {
+        
+    }
+    .phase {
+        width : 100%;
+    }
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="searcher">
+    <h1 class="image_search_title"><!--
+        --><span class="gblue">画</span><!--
+        --><span class="gred">像</span><!--
+        --><span class="gyellow">か</span><!--
+        --><span class="gblue">ら</span><!--
+        --><span class="ggreen">探</span><!--
+        --><span class="gred">索</span><!--
+    --></h1>
+    <form class="predict_form" id="predict" action='predict' method='POST' enctype='multipart/form-data'>
+        <input type='file' id="upload_file" class="upload_file" name='upload'>
+        <input type='button' id="predict_submit" class="predict_submit" value='predict'>
+        <div id="canvas_area" class="upload_area"><canvas id="ss_canvas"></canvas></div>
+        <div id="upload_area" class="upload_area"></div>
+    </form>
+    </div>
+    <div id="result" class="result">
+    </div>
+</div>
+</body>
+</html>
